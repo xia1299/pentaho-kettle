@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2019 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -33,6 +33,7 @@ import java.util.List;
 
 import org.apache.commons.io.ByteOrderMark;
 import org.apache.commons.io.input.BOMInputStream;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.vfs2.FileObject;
 import org.apache.commons.vfs2.provider.local.LocalFile;
 import org.pentaho.di.core.Const;
@@ -48,6 +49,7 @@ import org.pentaho.di.core.row.ValueMetaInterface;
 import org.pentaho.di.core.util.Utils;
 import org.pentaho.di.core.vfs.KettleVFS;
 import org.pentaho.di.i18n.BaseMessages;
+import org.pentaho.di.repository.Repository;
 import org.pentaho.di.trans.Trans;
 import org.pentaho.di.trans.TransMeta;
 import org.pentaho.di.trans.step.BaseStep;
@@ -572,6 +574,11 @@ public class CsvInput extends BaseStep implements StepInterface {
       List<Exception> conversionExceptions = null;
       List<ValueMetaInterface> exceptionFields = null;
 
+      //Set file format to mixed if empty
+      if ( StringUtils.isBlank( meta.getFileFormat() ) ) {
+        meta.setFileFormat( "mixed" );
+      }
+
       // The strategy is as follows...
       // We read a block of byte[] from the file.
       // We scan for the separators in the file (NOT for line feeds etc)
@@ -581,7 +588,7 @@ public class CsvInput extends BaseStep implements StepInterface {
       //
       // Let's start by looking where we left off reading.
       //
-      while ( !newLineFound && outputIndex < data.fieldsMapping.size() ) {
+      while ( !newLineFound && outputIndex < meta.getInputFields().length ) {
 
         if ( data.resizeBufferIfNeeded() ) {
           // Last row was being discarded if the last item is null and
@@ -644,6 +651,7 @@ public class CsvInput extends BaseStep implements StepInterface {
             for ( int i = 0; i < data.encodingType.getLength(); i++ ) {
               data.moveEndBufferPointer();
             }
+
             // Re-check for double new line (\r\n)...
             if ( data.newLineFound() ) {
               // Found another one, need to skip it later
@@ -723,8 +731,7 @@ public class CsvInput extends BaseStep implements StepInterface {
           field = data.removeEscapedEnclosures( field, escapedEnclosureFound );
         }
 
-        final int currentFieldIndex = outputIndex++;
-        final int actualFieldIndex = data.fieldsMapping.fieldMetaIndex( currentFieldIndex );
+        final int actualFieldIndex = outputIndex++;
         if ( actualFieldIndex != FieldsMapping.FIELD_DOES_NOT_EXIST ) {
           if ( !skipRow ) {
             if ( meta.isLazyConversionActive() ) {
@@ -761,17 +768,33 @@ public class CsvInput extends BaseStep implements StepInterface {
         // this will prevent the endBuffer from being incremented twice (once by this block and once in the
         // do-while loop below) and possibly skipping a newline character. This can occur if there is an
         // empty column at the end of the row (see the Jira case for details)
-        if ( ( !newLineFound && outputIndex < data.fieldsMapping.size() ) || ( newLineFound && doubleLineEnd ) ) {
+        if ( ( !newLineFound && outputIndex < meta.getInputFields().length ) || ( newLineFound && doubleLineEnd ) ) {
+
           int i = 0;
           while ( ( !data.newLineFound() && ( i < data.delimiter.length ) ) ) {
             data.moveEndBufferPointer();
             i++;
           }
-          if ( data.newLineFound() && outputIndex >= data.fieldsMapping.size() ) {
-            data.moveEndBufferPointer();
-          }
-          if ( doubleLineEnd && data.encodingType.getLength() > 1 ) {
-            data.moveEndBufferPointer();
+
+          switch ( meta.getFileFormatTypeNr() ) {
+            case TextFileInputMeta.FILE_FORMAT_DOS:
+              if ( data.newLineFound() ) {
+                if ( doubleLineEnd == true ) {
+                  data.moveEndBufferPointerXTimes( data.encodingType.getLength() );
+                } else {
+                  //Re-check for a new Line
+                  data.moveEndBufferPointerXTimes( data.encodingType.getLength() );
+                  if ( !data.newLineFound() ) {
+                    throw new KettleFileException( BaseMessages.getString( PKG, "TextFileInput.Log.SingleLineFound" ) );
+                  }
+                }
+              }
+              break;
+            case TextFileInputMeta.FILE_FORMAT_MIXED:
+              if ( data.isCarriageReturn() || doubleLineEnd ) {
+                data.moveEndBufferPointerXTimes( data.encodingType.getLength() );
+              }
+              break;
           }
         }
 
@@ -855,7 +878,8 @@ public class CsvInput extends BaseStep implements StepInterface {
       // Otherwise, we'll grab the list of file names later...
       //
       if ( getTransMeta().findNrPrevSteps( getStepMeta() ) == 0 ) {
-        String filename = environmentSubstitute( meta.getFilename() );
+
+        String filename = filenameValidatorForInputFiles( meta.getFilename() );
 
         if ( Utils.isEmpty( filename ) ) {
           logError( BaseMessages.getString( PKG, "CsvInput.MissingFilename.Message" ) );
@@ -1139,4 +1163,16 @@ public class CsvInput extends BaseStep implements StepInterface {
 
     return strings.toArray( new String[ strings.size() ] );
   }
+
+  String filenameValidatorForInputFiles( String filename ) {
+    Repository rep = getTransMeta().getRepository();
+    if ( rep != null && rep.isConnected() && filename
+      .contains( Const.INTERNAL_VARIABLE_ENTRY_CURRENT_DIRECTORY ) ) {
+      return environmentSubstitute( filename.replace( Const.INTERNAL_VARIABLE_ENTRY_CURRENT_DIRECTORY,
+        Const.INTERNAL_VARIABLE_TRANSFORMATION_FILENAME_DIRECTORY ) );
+    } else {
+      return environmentSubstitute( filename );
+    }
+  }
+
 }

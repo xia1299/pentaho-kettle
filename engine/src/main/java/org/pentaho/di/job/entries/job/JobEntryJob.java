@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2019 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -411,9 +411,9 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
         if ( Utils.isEmpty( filename ) && !Utils.isEmpty( directory ) && !Utils.isEmpty( jobname ) ) {
           // this job was exported from a repository and is being loaded locally
           // need to create a well formatted filename
-          filename = directory + "/" + jobname;
-          if ( !filename.toLowerCase().endsWith( ".kjb" ) ) {
-            filename = filename + ".kjb";
+          filename = directory + RepositoryFile.SEPARATOR + jobname;
+          if ( !filename.toLowerCase().endsWith( RepositoryObjectType.JOB.getExtension() ) ) {
+            filename = filename + RepositoryObjectType.JOB.getExtension();
           }
         }
       }
@@ -730,9 +730,10 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
       List<RowMetaAndData> rows = new ArrayList<RowMetaAndData>( result.getRows() );
 
       while ( ( first && !execPerRow )
-        || ( execPerRow && rows != null && iteration < rows.size() && result.getNrErrors() == 0 ) ) {
-        first = false;
+        || ( execPerRow && rows != null && iteration <= rows.size() && result.getNrErrors() == 0 ) ) {
+        // PDI-18776: '<' was changed to '<=' to make sure we iterate once in case Execute Every Input Row checkbox is checked
 
+        first = false;
         // Clear the result rows of the result
         // Otherwise we double the amount of rows every iteration in the simple cases.
         //
@@ -740,8 +741,15 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
           result.getRows().clear();
         }
 
-        if ( rows != null && execPerRow ) {
-          resultRow = rows.get( iteration );
+        // PDI-18776: Get the result row from rows based on iteration index if rows is not empty otherwise result row is null
+        if ( rows != null && execPerRow && !rows.isEmpty() ) {
+          // This check is for avoiding OutOfBoundException in next statement as iteration <= rows.size() condition is not leaving while loop
+          // after processing the last row. Otherwise if iteration == rows.size() indicates that we processed already the last row and just need to break from the loop
+          if ( iteration != rows.size() ) {
+            resultRow = rows.get( iteration );
+          } else {
+            break;
+          }
         } else {
           resultRow = null;
         }
@@ -818,7 +826,9 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
           } else {
             // Just pass a single row
             List<RowMetaAndData> newList = new ArrayList<RowMetaAndData>();
-            newList.add( resultRow );
+            if ( resultRow != null ) {
+              newList.add( resultRow );
+            }
             sourceRows = newList;
           }
 
@@ -974,6 +984,9 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
               //
               if ( isPassingAllParameters() ) {
                 String parentValue = parentJob.getParameterValue( parameterNames[idx] );
+                if ( Utils.isEmpty( parentValue ) ) {
+                  parentValue = parentJob.getParameterDefault( parameterNames[idx] );
+                }
                 if ( !Utils.isEmpty( parentValue ) ) {
                   job.setParameterValue( parameterNames[idx], parentValue );
                 }
@@ -1374,7 +1387,7 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
     }
   }
 
-  private JobMeta getJobMetaFromRepository( Repository rep, CurrentDirectoryResolver r, String transPath ) throws KettleException {
+  protected JobMeta getJobMetaFromRepository( Repository rep, CurrentDirectoryResolver r, String transPath, VariableSpace tmpSpace ) throws KettleException {
     String realJobName = "";
     String realDirectory = "/";
 
@@ -1389,7 +1402,11 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
     if ( repositoryDirectory == null ) {
       throw new KettleException( "Unable to find repository directory [" + Const.NVL( realDirectory, "" ) + "]" );
     }
-    return rep.loadJob( realJobName, repositoryDirectory, null, null ); // reads
+    JobMeta jobMeta = rep.loadJob( realJobName, repositoryDirectory, null, null ); //reads
+    if ( jobMeta != null ) {
+      jobMeta.initializeVariablesFrom( tmpSpace );
+    }
+    return jobMeta;
   }
 
   public JobMeta getJobMeta( Repository rep, IMetaStore metaStore, VariableSpace space ) throws KettleException {
@@ -1406,7 +1423,7 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
             jobMeta = new JobMeta( tmpSpace, realFilename, rep, metaStore, null );
           } catch ( KettleException e ) {
             // try to load from repository, this job may have been developed locally and later uploaded to the repository
-            jobMeta = getJobMetaFromRepository( rep, r, realFilename );
+            jobMeta = getJobMetaFromRepository( rep, r, realFilename, tmpSpace );
           }
           break;
         case REPOSITORY_BY_NAME:
@@ -1421,7 +1438,7 @@ public class JobEntryJob extends JobEntryBase implements Cloneable, JobEntryInte
             }
             jobMeta = new JobMeta( tmpSpace, transPath, rep, metaStore, null );
           } else {
-            jobMeta = getJobMetaFromRepository( rep, r, transPath );
+            jobMeta = getJobMetaFromRepository( rep, r, transPath, tmpSpace );
           }
           break;
         case REPOSITORY_BY_REFERENCE:

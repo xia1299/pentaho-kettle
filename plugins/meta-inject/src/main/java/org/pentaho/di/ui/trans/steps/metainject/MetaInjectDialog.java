@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -112,8 +112,7 @@ import java.util.Set;
 @PluginDialog(
     id = "MetaInject",
     image = "org/pentaho/di/ui/trans/steps/metainject/img/GenericTransform.svg",
-    pluginType = PluginDialog.PluginType.STEP,
-    documentationUrl = "Products/Data_Integration/Transformation_Step_Reference/ETL_Metadata_Injection"
+    pluginType = PluginDialog.PluginType.STEP
 )
 public class MetaInjectDialog extends BaseStepDialog implements StepDialogInterface {
 
@@ -809,14 +808,17 @@ public class MetaInjectDialog extends BaseStepDialog implements StepDialogInterf
 
   private boolean loadTransformation() throws KettleException {
     String filename = wPath.getText();
+    boolean isEmptyFilename = Utils.isEmpty( filename );
     if ( repository != null ) {
-      specificationMethod = ObjectLocationSpecificationMethod.REPOSITORY_BY_NAME;
+      specificationMethod = ( isEmptyFilename && referenceObjectId != null )
+        ? ObjectLocationSpecificationMethod.REPOSITORY_BY_REFERENCE
+        : ObjectLocationSpecificationMethod.REPOSITORY_BY_NAME;
     } else {
       specificationMethod = ObjectLocationSpecificationMethod.FILENAME;
     }
     switch ( specificationMethod ) {
       case FILENAME:
-        if ( Utils.isEmpty( filename ) ) {
+        if ( isEmptyFilename ) {
           return false;
         }
         if ( !filename.endsWith( ".ktr" ) ) {
@@ -826,7 +828,7 @@ public class MetaInjectDialog extends BaseStepDialog implements StepDialogInterf
         loadFileTrans( filename );
         break;
       case REPOSITORY_BY_NAME:
-        if ( Utils.isEmpty( filename ) ) {
+        if ( isEmptyFilename ) {
           return false;
         }
         if ( filename.endsWith( ".ktr" ) ) {

@@ -34,11 +34,13 @@ define([
   function introController($location, $state, $q, $stateParams, dataService, vfsTypes, $timeout) {
     var vm = this;
     vm.$onInit = onInit;
-    vm.canNext = canNext;
     vm.onSelect = onSelect;
     vm.validateName = validateName;
     vm.resetErrorMsg = resetErrorMsg;
+    vm.checkConnectionName = checkConnectionName;
     vm.type = null;
+    vm.name = "";
+    var loaded = false;
 
     function onInit() {
       vm.connectionName = i18n.get('connections.intro.connectionName');
@@ -48,7 +50,10 @@ define([
 
       if ($stateParams.data) {
         vm.data = $stateParams.data;
-        vm.title = vm.data.state === "edit" ? i18n.get('connections.intro.edit.label') : i18n.get('connections.intro.new.label');
+        vm.title = vm.data.isSaved === true
+            ? i18n.get('connections.intro.edit.label')
+            : i18n.get('connections.intro.new.label');
+        vm.name = vm.data.model.name;
         vm.type = vm.data.model.type;
         vm.next = vm.data.model.type + "step1";
       } else {
@@ -69,19 +74,35 @@ define([
       if (connection) {
         vm.title = i18n.get('connections.intro.edit.label');
         dataService.getConnection(connection).then(function (res) {
-          var model = res.data;
-          vm.type = model.type;
-          vm.data.model = model;
-          vm.next = vm.data.model.type + "step1";
-          vm.data.state = "edit";
-          vm.data.isSaved = true;
+          loaded = true;
+          if (res.data !== "") {
+            setDialogTitle(vm.title);
+            var model = res.data;
+            vm.type = model.type;
+            vm.data.model = model;
+            vm.next = vm.data.model.type + "step1";
+            vm.data.state = "edit";
+            vm.data.isSaved = true;
+            vm.name = vm.data.model.name;
+          } else {
+            vm.title = i18n.get('connections.intro.new.label');
+            setDialogTitle(vm.title);
+          }
         });
+      } else {
+        loaded = true;
       }
+      setDialogTitle(vm.title);
+
+      vm.buttons = getButtons();
     }
 
     function resetErrorMsg() {
-      vm.data.state = "new";
-      vm.title = i18n.get('connections.intro.new.label');
+      if (!vm.data.isSaved) {
+        vm.data.state = "new";
+        vm.title = i18n.get('connections.intro.new.label');
+        setDialogTitle(vm.title);
+      }
       vm.errorMessage = null;
     }
 
@@ -100,30 +121,79 @@ define([
       }
     }
 
+    function checkConnectionName() {
+      vm.resetErrorMsg();
+      vm.name = vm.name.replace(/[^\w\s]/g,'');
+    }
+
     function validateName() {
       return $q(function(resolve, reject) {
         if (vm.data.state === "edit" || vm.data.isSaved) {
-          resolve(true);
+          if (vm.name !== vm.data.model.name) {
+            checkName(vm.name).then(function() {
+              vm.data.name = vm.data.model.name;
+              vm.data.model.name = vm.name;
+              resolve();
+            }, function() {
+              reject();
+            });
+          } else {
+            resolve();
+          }
         } else {
-          dataService.exists(vm.data.model.name).then(function (res) {
-            console.log(res);
-            var isValid = !res.data;
-            if (!isValid) {
-              vm.errorMessage = {
-                type: "error",
-                text: i18n.get('connections.intro.name.error', {
-                  name: vm.data.model.name
-                })
-              }
-            }
-            resolve(isValid);
+          checkName(vm.name).then(function() {
+            vm.data.model.name = vm.name;
+            resolve();
+          }, function() {
+            reject();
           });
         }
       });
     }
 
-    function canNext() {
-      return vm.data.model && vm.data.model.type && vm.data.model.name;
+    function checkName(name) {
+      return $q(function(resolve, reject) {
+        dataService.exists(name).then(function (res) {
+          var isValid = !res.data;
+          if (isValid) {
+            resolve();
+          } else {
+            vm.errorMessage = {
+              type: "error",
+              text: i18n.get('connections.intro.name.error', {
+                name: name
+              })
+            };
+            reject();
+          }
+        });
+      });
+    }
+
+    function setDialogTitle(title) {
+      if (loaded === true) {
+        try {
+          setTitle(title);
+        } catch (e) {
+          console.log(title);
+        }
+      }
+    }
+
+    function getButtons() {
+      return [{
+            label: vm.data.state === "modify" ? i18n.get('connections.controls.applyLabel') : i18n.get('connections.controls.nextLabel'),
+            class: "primary",
+            isDisabled: function() {
+              return !vm.data.model || !vm.data.model.type || !vm.name;
+            },
+            position: "right",
+            onClick: function() {
+              validateName().then(function() {
+                $state.go(vm.data.state === "modify" ? 'summary' : vm.next, {data: vm.data, transition: "slideLeft"});
+              });
+            }
+          }];
     }
   }
 

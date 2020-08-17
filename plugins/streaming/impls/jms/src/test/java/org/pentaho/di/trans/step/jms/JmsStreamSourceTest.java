@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -28,6 +28,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
+import org.pentaho.di.trans.SubtransExecutor;
 
 import javax.jms.Destination;
 import javax.jms.JMSConsumer;
@@ -39,6 +40,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -52,6 +54,7 @@ public class JmsStreamSourceTest {
   @Mock private JmsContext context;
   @Mock private JmsDelegate delegate;
   @Mock private JMSConsumer consumer;
+  @Mock private SubtransExecutor subtransExecutor;
   @Mock private JmsConsumer consumerStep;
   @Mock private Destination destination;
   @Mock private Message message;
@@ -60,11 +63,16 @@ public class JmsStreamSourceTest {
 
   @Before
   public void before() throws JMSException {
+    when( subtransExecutor.getPrefetchCount() ).thenReturn( 1000 );
+    when( consumerStep.getSubtransExecutor() ).thenReturn( subtransExecutor );
     source = new JmsStreamSource( consumerStep, delegate, 0 );
     when( delegate.getJmsContext() ).thenReturn( context );
     when( delegate.getDestination() ).thenReturn( destination );
     when( context.createConsumer( destination ) ).thenReturn( consumer );
     when( message.getBody( Object.class ) ).thenReturn( "message" );
+    when( message.getJMSMessageID() ).thenReturn( "messageId" );
+    when( message.getJMSTimestamp() ).thenReturn( 1000L );
+    when( message.getJMSRedelivered() ).thenReturn( true );
 
     delegate.destinationName = "dest";
 
@@ -89,9 +97,13 @@ public class JmsStreamSourceTest {
 
     List<Object> sentMessage = source.flowable().firstElement().blockingGet( Collections.emptyList() );
 
-    assertThat( sentMessage.size(), equalTo( 2 ) );
+    assertEquals( 5, sentMessage.size() );
     assertThat( sentMessage.get( 0 ), equalTo( "message" ) );
     assertThat( sentMessage.get( 1 ), equalTo( "dest" ) );
+    assertThat( sentMessage.get( 2 ), equalTo( "messageId" ) );
+    assertThat( sentMessage.get( 3 ), equalTo( "01-01-1970 00:00:01 AM" ) );
+    assertThat( sentMessage.get( 4 ), equalTo( true ) );
+
     verify( consumer ).close();
     verify( context ).close();
   }

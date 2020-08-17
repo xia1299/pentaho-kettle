@@ -3,7 +3,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2019 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -56,7 +56,9 @@ import org.pentaho.di.shared.SharedObjectBase;
 import org.pentaho.di.shared.SharedObjectInterface;
 import org.w3c.dom.Node;
 
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -127,6 +129,8 @@ public class DatabaseMeta extends SharedObjectBase implements Cloneable, XMLInte
   private ObjectRevision objectRevision;
 
   private boolean readOnly = false;
+
+  private boolean needUpdate = false;
 
   /**
    * Indicates that the connections doesn't point to a type of database yet.
@@ -911,8 +915,17 @@ public class DatabaseMeta extends SharedObjectBase implements Cloneable, XMLInte
     databaseInterface.setIndexTablespace( index_tablespace );
   }
 
+  boolean isNeedUpdate() {
+    return needUpdate;
+  }
+
+  void setNeedUpdate( boolean needUpdate ) {
+    this.needUpdate = needUpdate;
+  }
+
   public void setChanged() {
     setChanged( true );
+    setNeedUpdate( true );
   }
 
   public void setChanged( boolean ch ) {
@@ -1108,7 +1121,9 @@ public class DatabaseMeta extends SharedObjectBase implements Cloneable, XMLInte
     String url =  environmentSubstitute( baseUrl );
 
     if ( databaseInterface.supportsOptionsInURL() ) {
-      url = appendExtraOptions( url, getExtraOptions() );
+      Map<String, String> extraOptions = getExtraOptions();
+      databaseInterface.putOptionalOptions( extraOptions );
+      url = appendExtraOptions( url, extraOptions );
     }
     // else {
     // We need to put all these options in a Properties file later (Oracle & Co.)
@@ -1261,8 +1276,9 @@ public class DatabaseMeta extends SharedObjectBase implements Cloneable, XMLInte
     final Map<String, String> extraOptions = getExtraOptions();
 
     final Map<String, String> defaultOptions = databaseInterface.getDefaultOptions();
-    for ( String option : defaultOptions.keySet() ) {
-      String value = defaultOptions.get( option );
+    for ( Map.Entry<String, String> entry : defaultOptions.entrySet() ) {
+      String option = entry.getKey();
+      String value = entry.getValue();
       String[] split = option.split( "[.]", 2 );
       if ( !extraOptions.containsKey( option ) && split.length == 2 ) {
         addExtraOption( split[0], split[1], value );
@@ -3083,5 +3099,22 @@ public class DatabaseMeta extends SharedObjectBase implements Cloneable, XMLInte
    */
   protected DatabaseInterface getDbInterface( String typeCode ) throws KettleDatabaseException {
     return getDatabaseInterface( typeCode );
+  }
+
+  public ResultSet getTables( DatabaseMetaData databaseMetaData, String schema, String table,
+                              String[] tableTypesToGet ) throws SQLException {
+    return databaseInterface.getTables( databaseMetaData, this, schema, table, tableTypesToGet );
+  }
+
+  public ResultSet getSchemas( DatabaseMetaData databaseMetaData ) throws SQLException {
+    return databaseInterface.getSchemas( databaseMetaData, this );
+  }
+
+  public String getNamedCluster() {
+    return databaseInterface.getNamedCluster();
+  }
+
+  public void setNamedCluster( String namedCluster ) {
+    databaseInterface.setNamedCluster( namedCluster );
   }
 }

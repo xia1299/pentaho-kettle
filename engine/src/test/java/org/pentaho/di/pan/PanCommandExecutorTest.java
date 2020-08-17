@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2019 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -24,15 +24,32 @@ package org.pentaho.di.pan;
 
 import org.apache.commons.io.FileUtils;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.pentaho.di.core.Const;
+import org.junit.runner.RunWith;
+import org.pentaho.di.base.CommandExecutorCodes;
+import org.pentaho.di.base.Params;
+import org.pentaho.di.core.Result;
+import org.pentaho.di.core.logging.KettleLogStore;
+import org.pentaho.di.i18n.BaseMessages;
+import org.pentaho.di.kitchen.Kitchen;
 import org.pentaho.di.repository.Repository;
 import org.pentaho.di.repository.RepositoryDirectoryInterface;
 import org.pentaho.di.trans.Trans;
 import org.pentaho.di.trans.TransMeta;
 import org.pentaho.metastore.api.IMetaStore;
 import org.pentaho.metastore.stores.delegate.DelegatingMetaStore;
+import org.powermock.api.mockito.PowerMockito;
+import org.powermock.core.classloader.annotations.PrepareForTest;
+import org.powermock.modules.junit4.PowerMockRunner;
+import org.pentaho.di.core.plugins.ClassLoadingPluginInterface;
+import org.pentaho.di.core.plugins.PluginInterface;
+import org.pentaho.di.core.plugins.PluginRegistry;
+import org.pentaho.di.core.logging.LogChannelInterface;
+import org.pentaho.di.core.extension.ExtensionPointInterface;
+import org.pentaho.di.core.extension.ExtensionPointPluginType;
+import org.pentaho.di.core.extension.KettleExtensionPoint;
 
 import java.io.File;
 import java.util.Base64;
@@ -40,12 +57,19 @@ import java.util.Base64;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Matchers.anyObject;
 import static org.mockito.Matchers.anyString;
+import static org.mockito.Matchers.anyVararg;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Matchers.same;
 
+@RunWith( PowerMockRunner.class )
+@PrepareForTest( BaseMessages.class )
 public class PanCommandExecutorTest {
 
   private static final String FS_METASTORE_NAME = "FS_METASTORE";
@@ -59,16 +83,18 @@ public class PanCommandExecutorTest {
   private IMetaStore fsMetaStore;
   private IMetaStore repoMetaStore;
   private RepositoryDirectoryInterface directoryInterface;
-  private MockedPanCommandExecutor mockedPanCommandExecutor;
+  private PanCommandExecutor mockedPanCommandExecutor;
+  interface PluginMockInterface extends ClassLoadingPluginInterface, PluginInterface {
+  }
 
   @Before
   public void setUp() throws Exception {
-
+    KettleLogStore.init();
     repository = mock( Repository.class );
     fsMetaStore = mock( IMetaStore.class );
     repoMetaStore = mock( IMetaStore.class );
     directoryInterface = mock( RepositoryDirectoryInterface.class );
-    mockedPanCommandExecutor = mock( MockedPanCommandExecutor.class );
+    mockedPanCommandExecutor = mock( PanCommandExecutor.class );
 
     // mock actions from Metastore
     when( fsMetaStore.getName() ).thenReturn( FS_METASTORE_NAME );
@@ -81,12 +107,14 @@ public class PanCommandExecutorTest {
     // mock actions from PanCommandExecutor
     when( mockedPanCommandExecutor.getMetaStore() ).thenReturn( metastore );
     when( mockedPanCommandExecutor.loadRepositoryDirectory( anyObject(), anyString(), anyString(), anyString(), anyString() ) )
-            .thenReturn( directoryInterface );
+      .thenReturn( directoryInterface );
 
     // call real methods for loadTransFromFilesystem(), loadTransFromRepository();
-    when( mockedPanCommandExecutor.loadTransFromFilesystem( anyString(), anyString(), anyString(), anyString() ) ).thenCallRealMethod();
+    when( mockedPanCommandExecutor.loadTransFromFilesystem( anyString(), anyString(), anyString(), anyObject() ) ).thenCallRealMethod();
     when( mockedPanCommandExecutor.loadTransFromRepository( anyObject(), anyString(), anyString() ) ).thenCallRealMethod();
-    when( mockedPanCommandExecutor.decodeBase64StringToFile( anyString(), anyString() ) ).thenCallRealMethod();
+    when( mockedPanCommandExecutor.decodeBase64ToZipFile( anyObject(), anyBoolean() ) ).thenCallRealMethod();
+    when( mockedPanCommandExecutor.decodeBase64ToZipFile( anyObject(), anyString() ) ).thenCallRealMethod();
+
   }
 
   @After
@@ -115,13 +143,13 @@ public class PanCommandExecutorTest {
 
     assertEquals( 2, ( (DelegatingMetaStore) trans.getMetaStore() ).getMetaStoreList().size() );
     assertTrue( ( (DelegatingMetaStore) trans.getMetaStore() ).getMetaStoreList().stream()
-            .anyMatch( m -> {
-              try {
-                return REPO_METASTORE_NAME.equals( m.getName() );
-              } catch ( Exception e ) {
-                return false;
-              }
-            } ) );
+      .anyMatch( m -> {
+        try {
+          return REPO_METASTORE_NAME.equals( m.getName() );
+        } catch ( Exception e ) {
+          return false;
+        }
+      } ) );
   }
 
   @Test
@@ -138,13 +166,13 @@ public class PanCommandExecutorTest {
     assertEquals( 1, ( (DelegatingMetaStore) trans.getMetaStore() ).getMetaStoreList().size() );
 
     assertTrue( ( (DelegatingMetaStore) trans.getMetaStore() ).getMetaStoreList().stream()
-            .anyMatch( m -> {
-              try {
-                return FS_METASTORE_NAME.equals( m.getName() );
-              } catch ( Exception e ) {
-                return false;
-              }
-            } ) );
+      .anyMatch( m -> {
+        try {
+          return FS_METASTORE_NAME.equals( m.getName() );
+        } catch ( Exception e ) {
+          return false;
+        }
+      } ) );
   }
 
   @Test
@@ -152,7 +180,97 @@ public class PanCommandExecutorTest {
     String fileName = "test.ktr";
     File zipFile = new File( getClass().getResource( "testKtrArchive.zip" ).toURI() );
     String base64Zip = Base64.getEncoder().encodeToString( FileUtils.readFileToByteArray( zipFile ) );
-    Trans trans = mockedPanCommandExecutor.loadTransFromFilesystem( Const.getDIHomeDirectory(), fileName, "", base64Zip );
+    Trans trans = mockedPanCommandExecutor.loadTransFromFilesystem( null, fileName, null, base64Zip );
     assertNotNull( trans );
   }
+
+
+  @Test
+  public void testExecuteWithInvalidRepository() {
+    // Create Mock Objects
+    Params params = mock( Params.class );
+    PanCommandExecutor panCommandExecutor = new PanCommandExecutor( Kitchen.class );
+    PowerMockito.mockStatic( BaseMessages.class );
+
+    // Mock returns
+    when( params.getRepoName() ).thenReturn( "NoExistingRepository" );
+    when( BaseMessages.getString( any( Class.class ), anyString(), anyVararg() ) ).thenReturn( "" );
+
+    try {
+      Result result = panCommandExecutor.execute( params, null );
+      Assert.assertEquals( CommandExecutorCodes.Pan.COULD_NOT_LOAD_TRANS.getCode(), result.getExitStatus() );
+    } catch ( Throwable throwable ) {
+      Assert.fail();
+    }
+
+  }
+
+  /**
+   * This method test a valid ktr and make sure the callExtensionPoint is never called, as this method is called
+   * if the ktr fails in preparation step
+   * @throws Throwable
+   */
+  @Test
+  public void testNoTransformationFinishExtensionPointCalled() throws Throwable {
+    PluginMockInterface pluginInterface = mock( PluginMockInterface.class );
+    when( pluginInterface.getName() ).thenReturn( KettleExtensionPoint.TransformationFinish.id );
+    when( pluginInterface.getMainType() ).thenReturn( (Class) ExtensionPointInterface.class );
+    when( pluginInterface.getIds() ).thenReturn( new String[] { "extensionpointId" } );
+
+    ExtensionPointInterface extensionPoint = mock( ExtensionPointInterface.class );
+    when( pluginInterface.loadClass( ExtensionPointInterface.class ) ).thenReturn( extensionPoint );
+
+    PluginRegistry.addPluginType( ExtensionPointPluginType.getInstance() );
+    PluginRegistry.getInstance().registerPlugin( ExtensionPointPluginType.class, pluginInterface );
+
+    // Execute a sample KTR
+    String fullPath = getClass().getResource( SAMPLE_KTR ).getPath();
+    Params params = mock( Params.class );
+
+    when( params.getRepoName() ).thenReturn( "" );
+    when( params.getLocalInitialDir() ).thenReturn( "" );
+    when( params.getLocalFile() ).thenReturn( fullPath );
+    when( params.getLocalJarFile() ).thenReturn( "" );
+    when( params.getBase64Zip() ).thenReturn( "" );
+    Trans trans = mockedPanCommandExecutor.loadTransFromFilesystem( "", fullPath, "", "" );
+
+    PanCommandExecutor panCommandExecutor = new PanCommandExecutor( PanCommandExecutor.class );
+    Result result = panCommandExecutor.execute( params );
+    verify( extensionPoint, times( 0 ) ).callExtensionPoint( any( LogChannelInterface.class ), same( trans ) );
+  }
+
+  /**
+   * This method test a ktr that fails in preparation step and and checks to make sure the callExtensionPoint is
+   * called once.
+   * @throws Throwable
+   */
+  @Test
+  public void testTransformationFinishExtensionPointCalled() throws Throwable {
+    PluginMockInterface pluginInterface = mock( PluginMockInterface.class );
+    when( pluginInterface.getName() ).thenReturn( KettleExtensionPoint.TransformationFinish.id );
+    when( pluginInterface.getMainType() ).thenReturn( (Class) ExtensionPointInterface.class );
+    when( pluginInterface.getIds() ).thenReturn( new String[] { "extensionpointId" } );
+
+    ExtensionPointInterface extensionPoint = mock( ExtensionPointInterface.class );
+    when( pluginInterface.loadClass( ExtensionPointInterface.class ) ).thenReturn( extensionPoint );
+
+    PluginRegistry.addPluginType( ExtensionPointPluginType.getInstance() );
+    PluginRegistry.getInstance().registerPlugin( ExtensionPointPluginType.class, pluginInterface );
+
+    // Execute a sample KTR
+    String fullPath = getClass().getResource( "fail_on_prep_hello_world.ktr" ).getPath();
+    Params params = mock( Params.class );
+
+    when( params.getRepoName() ).thenReturn( "" );
+    when( params.getLocalInitialDir() ).thenReturn( "" );
+    when( params.getLocalFile() ).thenReturn( fullPath );
+    when( params.getLocalJarFile() ).thenReturn( "" );
+    when( params.getBase64Zip() ).thenReturn( "" );
+    Trans trans = mockedPanCommandExecutor.loadTransFromFilesystem( "", fullPath, "", "" );
+
+    PanCommandExecutor panCommandExecutor = new PanCommandExecutor( PanCommandExecutor.class );
+    Result result = panCommandExecutor.execute( params );
+    verify( extensionPoint, times( 1 ) ).callExtensionPoint(  any( LogChannelInterface.class ), any( Trans.class ) );
+  }
+
 }

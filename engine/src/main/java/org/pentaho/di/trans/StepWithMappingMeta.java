@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2019 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2020 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -153,13 +153,20 @@ public abstract class StepWithMappingMeta extends BaseSerializingMeta implements
         break;
 
       case REPOSITORY_BY_NAME:
-        String realTransname = tmpSpace.environmentSubstitute( executorMeta.getTransName() );
-        String realDirectory = tmpSpace.environmentSubstitute( executorMeta.getDirectoryPath() );
+        String realTransname = tmpSpace.environmentSubstitute( Const.NVL( executorMeta.getTransName(), "" ) );
+        String realDirectory = tmpSpace.environmentSubstitute( Const.NVL( executorMeta.getDirectoryPath(), "" ) );
 
         if ( space != null ) {
           // This is a parent transformation and parent variable should work here. A child file name can be resolved via parent space.
           realTransname = space.environmentSubstitute( realTransname );
           realDirectory = space.environmentSubstitute( realDirectory );
+        }
+
+        if ( Utils.isEmpty( realDirectory ) && !Utils.isEmpty( realTransname ) ) {
+          int index = realTransname.lastIndexOf( '/' );
+          String transPath =  realTransname;
+          realTransname = realTransname.substring( index + 1 );
+          realDirectory = transPath.substring( 0, index );
         }
 
         if ( rep != null ) {
@@ -433,21 +440,34 @@ public abstract class StepWithMappingMeta extends BaseSerializingMeta implements
     }
   }
 
-  public static void replaceVariableValues( VariableSpace childTransMeta, VariableSpace replaceBy ) {
+  public static void replaceVariableValues( VariableSpace childTransMeta, VariableSpace replaceBy, String type ) {
     if ( replaceBy == null ) {
       return;
     }
     String[] variableNames = replaceBy.listVariables();
     for ( String variableName : variableNames ) {
-      if ( childTransMeta.getVariable( variableName ) != null && !isInternalVariable( variableName ) ) {
+      if ( childTransMeta.getVariable( variableName ) != null && !isInternalVariable( variableName, type ) ) {
         childTransMeta.setVariable( variableName, replaceBy.getVariable( variableName ) );
       }
     }
   }
 
-  private static boolean isInternalVariable( String variableName ) {
-    return ( Arrays.asList( Const.INTERNAL_JOB_VARIABLES ).contains( variableName )
-      || Arrays.asList( Const.INTERNAL_TRANS_VARIABLES ).contains( variableName ) );
+  public static void replaceVariableValues( VariableSpace childTransMeta, VariableSpace replaceBy ) {
+    replaceVariableValues(  childTransMeta,  replaceBy, "" );
+  }
+
+  private static boolean isInternalVariable( String variableName, String type ) {
+    return type.equals( "Trans" ) ? isTransInternalVariable( variableName )
+      : type.equals( "Job" ) ? isJobInternalVariable( variableName )
+      : isJobInternalVariable( variableName ) || isTransInternalVariable( variableName );
+  }
+
+  private static boolean isTransInternalVariable( String variableName ) {
+    return ( Arrays.asList( Const.INTERNAL_TRANS_VARIABLES ).contains( variableName ) );
+  }
+
+  private static boolean isJobInternalVariable( String variableName ) {
+    return ( Arrays.asList( Const.INTERNAL_JOB_VARIABLES ).contains( variableName ) );
   }
 
   /**
